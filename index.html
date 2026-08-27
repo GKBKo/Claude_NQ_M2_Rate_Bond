@@ -53,9 +53,249 @@
   .metric-delta { font-size:0.76rem; margin-top:2px; font-weight:600; }
   .delta-up { color:#dc2626; } .delta-down { color:#2563eb; } .delta-neu { color:#64748b; }
   hr.dash-divider { border:none; border-top:1px solid #cbd5e1; margin:6px 0 14px; }
-  /* 차트 */
+  /* 차트 및 교차점 Dot(마커) 스타일 강화 */
   #chart-wrap { position:relative; width:100%; }
   #value-box {
     position:absolute; top:8px; left:8px; z-index:20; background:rgba(255,255,255,0.94);
     border:1px solid #cbd5e1; border-radius:6px; padding:8px 10px; font-size:10px;
-    line-height:1.55; color:#1
+    line-height:1.55; color:#1e293b; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.08);
+    pointer-events:none;
+  }
+  /* Plotly 기본 툴팁 텍스트 상자 숨김 */
+  #plotly-div .hoverlayer .hovertext { display:none !important; }
+  /* 호버 시 세로선 교차점에 찍히는 각 인덱스별 Dot(점)을 선명하게 강조 */
+  #plotly-div .hoverlayer circle {
+    r: 4.5px !important;
+    stroke-width: 1.5px !important;
+    stroke: #ffffff !important;
+  }
+  
+  .src-note { font-size:0.72rem; color:#64748b; margin-top:8px; text-align:right; }
+  .src-note a { color:#1d4ed8; }
+  .status { padding:10px 14px; border-radius:6px; font-size:0.85rem; margin-bottom:12px; }
+  .status.err { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; }
+  .status.warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
+  .updated { font-size:0.72rem; color:#94a3b8; }
+  /* 모바일 */
+  .hamburger {
+    display:none; position:fixed; top:10px; left:10px; z-index:1000; background:#1d4ed8; color:#fff;
+    border:none; border-radius:6px; padding:8px 12px; font-size:1rem; cursor:pointer;
+  }
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:900; }
+  @media (max-width: 860px) {
+    .hamburger { display:block; }
+    .sidebar {
+      position:fixed; left:0; top:0; height:100vh; z-index:950; transform:translateX(-100%);
+      transition:transform 0.25s ease; box-shadow:2px 0 12px rgba(0,0,0,0.15);
+    }
+    .app.open .sidebar { transform:translateX(0); }
+    .app.open .overlay { display:block; }
+    .content { padding:52px 12px 32px; }
+    .dash-title { font-size:1.05rem; }
+    .metric-card { min-width:calc(50% - 6px); padding:8px 12px; }
+    .metric-value { font-size:1.05rem; }
+  }
+  /* 지표별 스타일 옵션 */
+  .ind-item { margin-bottom:9px; }
+  .ind-item .chk { padding:2px 0; }
+  .ind-opts { display:flex; gap:5px; align-items:center; margin:3px 0 0 22px; }
+  .ind-opts input[type=color] { width:30px; height:24px; padding:0; border:1px solid #cbd5e1; border-radius:4px; cursor:pointer; background:#fff; flex:0 0 auto; }
+  .ind-opts input[type=number] { width:50px; padding:3px 4px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.75rem; margin:0; flex:0 0 auto; }
+  .ind-opts select { flex:1 1 auto; min-width:0; padding:3px 4px; font-size:0.72rem; margin:0; }
+</style>
+</head>
+<body>
+<button class="hamburger" id="hamburger">&#9776; 설정</button>
+<div class="app" id="app">
+  <div class="overlay" id="overlay"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-h">분석 기간</div>
+    <div class="chips" id="period-chips"></div>
+    <div class="sb-sub">시작일</div>
+    <input type="date" id="start-date">
+    <div class="sb-sub">종료일</div>
+    <input type="date" id="end-date">
+
+    <hr class="sb-div">
+    <div class="sb-h">Y축 설정</div>
+    <div id="ymode-group"></div>
+
+    <hr class="sb-div">
+    <div class="sb-h">차트 타입</div>
+    <div id="ctype-group"></div>
+
+    <hr class="sb-div">
+    <div class="sb-h">회귀 채널</div>
+    <label class="chk"><input type="checkbox" id="show-reg" checked> 회귀 채널 표시</label>
+    <div id="reg-opts">
+      <label class="chk"><input type="checkbox" id="reg-log" checked> 로그 회귀 (권장)</label>
+      <div class="sb-sub">표준편차 배수: <span class="slider-val" id="std-val">1.0</span></div>
+      <input type="range" id="std-mult" min="0.5" max="4.0" step="0.1" value="1.0">
+    </div>
+
+    <hr class="sb-div">
+    <div class="sb-h">지표 표시</div>
+    <div id="ind-group"></div>
+
+    <div id="axis-section">
+      <hr class="sb-div">
+      <div class="sb-h">축 배정 (지표별 Y축)</div>
+      <div id="axis-group"></div>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="dash-title">NASDAQ · M2 · 기준금리 · 글로벌 유동성 매크로 대시보드</div>
+    <div class="dash-subtitle">NASDAQ Composite · 미국 M2 통화량 · 연방기금금리 · Global Excess Liquidity Proxy(근사, 12M 선행) — FRED/Yahoo Finance</div>
+    <div id="status"></div>
+    <div id="chart-wrap">
+      <div id="value-box"></div>
+      <div id="plotly-div" style="width:100%;"></div>
+    </div>
+    <div class="src-note">
+      데이터 출처: Yahoo Finance (나스닥) · FRED (M2SL, FEDFUNDS, WALCL, ECBASSETSW, JPNASSETS, DEXUSEU, DEXJPUS, DGS10, DGS30) ·
+      <a href="https://fred.stlouisfed.org" target="_blank">fred.stlouisfed.org</a><br>
+      ※ '글로벌 유동성 프록시'는 Fed+ECB+BOJ 대차대조표(USD 환산) 합산 YoY%를 12개월 선행 표시한 근사치이며,
+      MacroMicro의 'Global Excess Liquidity Proxy'(GDP가중 M2·정책금리, PBOC 포함) 원 지표와 수치가 동일하지 않습니다.
+      <div class="updated" id="updated"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+
+// ══════════════════════════════════════════════════════════════════════════
+// 색상 (원본과 동일)
+const COLORS = {
+  nasdaq:"#1d4ed8", m2:"#dc2626", fed:"#15803d", liquidity:"#7c3aed",
+  dgs10:"#0891b2", dgs30:"#c2410c", spread:"#65a30d"
+};
+// 지표별 기본 스타일 (색상 / 굵기 / 선종류) — 사용자 조정 가능
+const DEF_STYLE = {
+  nasdaq:{color:"#1d4ed8", width:1.8, dash:"solid"},
+  m2:{color:"#dc2626", width:1.5, dash:"dot"},
+  fed:{color:"#15803d", width:1.5, dash:"dot"},
+  liquidity:{color:"#7c3aed", width:1.5, dash:"dashdot"},
+  dgs10:{color:"#0891b2", width:1.5, dash:"dot"},
+  dgs30:{color:"#c2410c", width:1.5, dash:"dot"},
+  spread:{color:"#65a30d", width:1.3, dash:"dashdot"}
+};
+function lineOf(id){ const s=S.style[id]; return {color:s.color, width:s.width, dash:s.dash}; }
+// 축 선택지
+const AXIS_CHOICES = ["메인(좌)","왼쪽 보조축 1","왼쪽 보조축 2","오른쪽 보조축 1",
+  "오른쪽 보조축 2","오른쪽 보조축 3","오른쪽 보조축 4","오른쪽 보조축 5"];
+const AXIS_KEY_OF = {"메인(좌)":"y","왼쪽 보조축 1":"y2","왼쪽 보조축 2":"y7",
+  "오른쪽 보조축 1":"y3","오른쪽 보조축 2":"y4","오른쪽 보조축 3":"y5",
+  "오른쪽 보조축 4":"y6","오른쪽 보조축 5":"y8"};
+const AXIS_NAME_OF = {"y":"yaxis","y2":"yaxis2","y3":"yaxis3","y4":"yaxis4",
+  "y5":"yaxis5","y6":"yaxis6","y7":"yaxis7","y8":"yaxis8"};
+const LEFT_AXIS_KEYS=["y2","y7"], RIGHT_AXIS_KEYS=["y3","y4","y5","y6","y8"];
+const AXIS_STEP=0.026;
+
+// 지표 정의
+const INDICATORS = [
+  {id:"nasdaq",   label:"나스닥",                              axLabel:"나스닥 축",        axDefault:0},
+  {id:"m2",       label:"M2 (미국 통화량)",                    axLabel:"M2 축",            axDefault:1},
+  {id:"fed",      label:"기준금리 (FFR)",                      axLabel:"기준금리 축",      axDefault:3},
+  {id:"liquidity",label:"글로벌 유동성 프록시 (Fed+ECB+BOJ, 12M 선행)", axLabel:"글로벌 유동성 축", axDefault:4},
+  {id:"dgs10",    label:"美 국채금리 10년물",                  axLabel:"10년물 축",        axDefault:5},
+  {id:"dgs30",    label:"美 국채금리 30년물",                  axLabel:"30년물 축",        axDefault:6},
+  {id:"spread",   label:"10Y-30Y 금리차 (스프레드)",          axLabel:"금리차 축",        axDefault:7},
+];
+const PERIODS = ["YTD","1Y","3Y","5Y","10Y","20Y","30Y","MAX"];
+
+let DATA = null;
+const S = { period:"10Y", start:null, end:null, ymode:"다중 Y축", ctype:"Line",
+  showReg:true, regLog:true, stdMult:1.0,
+  show:{nasdaq:true,m2:true,fed:true,liquidity:true,dgs10:false,dgs30:true,spread:false},
+  axis:{}, style:{} };
+S.style = JSON.parse(JSON.stringify(DEF_STYLE));
+
+// ── 유틸 ──────────────────────────────────────────────────────────────────
+function fmt(v, d){ if(v===null||v===undefined||isNaN(v)) return "—";
+  return v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function todayStr(){ return DATA && DATA.updated ? DATA.updated : new Date().toISOString().slice(0,10); }
+
+function periodStart(period, endS){
+  const end = new Date(endS);
+  if(period==="MAX") return "1996-01-01";
+  if(period==="YTD") return end.getFullYear()+"-01-01";
+  const yrs={ "1Y":1,"3Y":3,"5Y":5,"10Y":10,"20Y":20,"30Y":30 }[period];
+  const d=new Date(end); d.setFullYear(d.getFullYear()-yrs);
+  return d.toISOString().slice(0,10);
+}
+
+// 시리즈 {dates,values} 를 [start,end] 로 필터
+function filt(ser, start, end){
+  if(!ser) return null;
+  const ds=[], vs=[];
+  for(let i=0;i<ser.dates.length;i++){
+    const dt=ser.dates[i];
+    if(dt>=start && dt<=end){ ds.push(dt); vs.push(ser.values[i]); }
+  }
+  return {dates:ds, values:vs};
+}
+// 나스닥 OHLC 필터
+function filtND(nd, start, end){
+  const o={dates:[],open:[],high:[],low:[],close:[]};
+  for(let i=0;i<nd.dates.length;i++){
+    const dt=nd.dates[i];
+    if(dt>=start && dt<=end){
+      o.dates.push(dt); o.open.push(nd.open[i]); o.high.push(nd.high[i]);
+      o.low.push(nd.low[i]); o.close.push(nd.close[i]);
+    }
+  }
+  return o;
+}
+// 정규화
+function normalize(ser, mode){
+  if(!ser) return ser;
+  const v=ser.values, n=v.length;
+  if(mode==="지수화 (기준=100)"){
+    const base=v.find(x=>x!==null && !isNaN(x));
+    return {dates:ser.dates, values:v.map(x=>(x===null||isNaN(x))?null:x/base*100)};
+  }
+  if(mode==="증감률 (수익률%)"){
+    const out=new Array(n).fill(null); let cum=0;
+    for(let i=1;i<n;i++){
+      if(v[i]!==null && v[i-1]!==null && v[i-1]!==0){
+        cum += (v[i]/v[i-1]-1)*100; out[i]=cum;
+      } else { out[i]=cum; }
+    }
+    return {dates:ser.dates, values:out};
+  }
+  return ser;
+}
+// 선형 최소제곱 (deg1)
+function polyfit1(x,y){
+  const n=x.length; let sx=0,sy=0,sxx=0,sxy=0;
+  for(let i=0;i<n;i++){ sx+=x[i]; sy+=y[i]; sxx+=x[i]*x[i]; sxy+=x[i]*y[i]; }
+  const slope=(n*sxy - sx*sy)/(n*sxx - sx*sx);
+  const ic=(sy - slope*sx)/n;
+  return [slope, ic];
+}
+function popStd(arr){
+  const n=arr.length; let m=0; for(const a of arr) m+=a; m/=n;
+  let s=0; for(const a of arr) s+=(a-m)*(a-m); return Math.sqrt(s/n);
+}
+
+// ── 렌더 ──────────────────────────────────────────────────────────────────
+function render(){
+  for(const id in S.style){ COLORS[id]=S.style[id].color; }
+  const start=S.start, end=S.end;
+  const useLog = !(S.ymode==="지수화 (기준=100)" || S.ymode==="증감률 (수익률%)");
+
+  // 데이터 필터
+  const nd  = filtND(DATA.nasdaq, start, end);
+  const m2  = filt(DATA.m2, start, end);
+  const fed = filt(DATA.fed, start, end);
+  const d10 = filt(DATA.dgs10, start, end);
+  const d30 = filt(DATA.dgs30, start, end);
+  
+  let spread=null;
+  if(d10 && d30 && d10.dates.length && d30.dates.length){
+    const m={}; for(let i=0;i<d10.dates.length;i++) if(d10.values[i]!==null) m[d10.dates[i]]=d10.values[i];
+    const ds=[],vs=[];
+    for(let i=0;i<d30.dates.length;i++){
+      const dt=d30.dates[i];
+      if(d30.values[i]!==null && m[dt]!==undefined){ ds.push(dt); vs.push(d30
