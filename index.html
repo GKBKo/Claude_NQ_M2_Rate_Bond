@@ -165,12 +165,12 @@ const COLORS = {
 // 지표별 기본 스타일 (색상 / 굵기 / 선종류) — 사용자 조정 가능
 const DEF_STYLE = {
   nasdaq:{color:"#1d4ed8", width:1.8, dash:"solid"},
-  m2:{color:"#dc2626", width:1.5, dash:"dot"},
-  fed:{color:"#15803d", width:1.5, dash:"dot"},
-  liquidity:{color:"#7c3aed", width:1.5, dash:"dashdot"},
-  dgs10:{color:"#0891b2", width:1.5, dash:"dot"},
-  dgs30:{color:"#c2410c", width:1.5, dash:"dot"},
-  spread:{color:"#65a30d", width:1.3, dash:"dashdot"}
+  m2:{color:"#dc2626", width:1, dash:"dot"},
+  fed:{color:"#15803d", width:1, dash:"dot"},
+  liquidity:{color:"#7c3aed", width:1, dash:"dashdot"},
+  dgs10:{color:"#0891b2", width:1, dash:"dot"},
+  dgs30:{color:"#c2410c", width:1, dash:"dot"},
+  spread:{color:"#65a30d", width:1, dash:"dashdot"}
 };
 function lineOf(id){ const s=S.style[id]; return {color:s.color, width:s.width, dash:s.dash}; }
 // 축 선택지
@@ -199,7 +199,7 @@ const PERIODS = ["YTD","1Y","3Y","5Y","10Y","20Y","30Y","MAX"];
 let DATA = null;
 const S = { period:"10Y", start:null, end:null, ymode:"다중 Y축", ctype:"Line",
   showReg:true, regLog:true, stdMult:1.0,
-  show:{nasdaq:true,m2:true,fed:true,liquidity:true,dgs10:false,dgs30:true,spread:false},
+  show:{nasdaq:true,m2:true,fed:true,liquidity:true,dgs10:true,dgs30:false,spread:false},
   axis:{}, style:{} };
 S.style = JSON.parse(JSON.stringify(DEF_STYLE));
 
@@ -475,6 +475,16 @@ function render(){
     layout.xaxis.domain=[0,1];
   }
 
+  // ── 호버 dot(교차점 표시)용 마커 트레이스: 사용 중인 Y축마다 1개 ──
+  const usedAxes = Object.keys(activeAxis);
+  const dotTraceIndex = {};
+  usedAxes.forEach(function(k){
+    dotTraceIndex[k] = traces.length;
+    traces.push({ type:"scatter", mode:"markers", x:[], y:[], yaxis:k,
+      marker:{ size:9, color:[], line:{color:"#ffffff", width:1.6} },
+      meta:"hoverdot", hoverinfo:"skip", showlegend:false, cliponaxis:false });
+  });
+
   Plotly.react('plotly-div', traces, layout, {responsive:true, displaylogo:false});
 
   // ── 값 박스 ──
@@ -493,16 +503,57 @@ function render(){
 
   const pd=document.getElementById('plotly-div');
   pd.removeAllListeners && pd.removeAllListeners('plotly_hover');
+  pd.removeAllListeners && pd.removeAllListeners('plotly_unhover');
+
+  // 회귀선/채널·호버dot 트레이스는 dot 대상에서 제외
+  function isIndicatorPt(p){
+    const nm=p.data.name||"";
+    if(p.data.meta==="hoverdot") return false;
+    if(nm.indexOf("회귀")>=0 || nm.indexOf("채널")>=0) return false;
+    return true;
+  }
+  // 언호버 시 dot 비우기
+  function clearDots(){
+    const idxs=usedAxes.map(k=>dotTraceIndex[k]);
+    if(!idxs.length) return;
+    const empt=idxs.map(()=>[]);
+    Plotly.restyle('plotly-div', {x:empt.map(()=>[]), y:empt.map(()=>[]), 'marker.color':empt.map(()=>[])}, idxs);
+  }
+
   pd.on('plotly_hover', function(evt){
     const pts=evt.points; if(!pts||!pts.length) return;
     const xL=pts[0].x;
-    const lines=pts.filter(p=>p.data.name && p.y!==undefined && p.y!==null)
+
+    // 값 박스 갱신 (지표만)
+    const lines=pts.filter(p=>isIndicatorPt(p) && p.data.name)
       .map(p=>{ const c=(p.data.line&&p.data.line.color)?p.data.line.color:"#334155";
-        return `<span style="color:${c}">●</span> ${p.data.name}: ${(typeof p.y==='number')?p.y.toLocaleString(undefined,{maximumFractionDigits:2}):p.y}`; })
+        const yv=(p.y!==undefined&&p.y!==null)?p.y:p.close;
+        return `<span style="color:${c}">●</span> ${p.data.name}: ${(typeof yv==='number')?yv.toLocaleString(undefined,{maximumFractionDigits:2}):yv}`; })
       .join("<br>");
     if(lines) box.innerHTML=`<b>${xL} 기준</b><br>`+lines;
+
+    // 세로 점선과 각 지표선의 교차점에 지표색 dot 표시 (Y축별 그룹)
+    const perX={}, perY={}, perC={};
+    pts.forEach(function(p){
+      if(!isIndicatorPt(p)) return;
+      const yv=(p.y!==undefined&&p.y!==null)?p.y:p.close;
+      if(yv===undefined||yv===null||(typeof yv==='number'&&isNaN(yv))) return;
+      const ax=p.data.yaxis||"y";
+      if(dotTraceIndex[ax]===undefined) return;
+      const col=(p.data.line&&p.data.line.color)?p.data.line.color
+               :((p.data.name&&p.data.name.indexOf("나스닥")>=0)?COLORS.nasdaq:"#334155");
+      (perX[ax]=perX[ax]||[]).push(p.x);
+      (perY[ax]=perY[ax]||[]).push(yv);
+      (perC[ax]=perC[ax]||[]).push(col);
+    });
+    const idxs=[], xu=[], yu=[], cu=[];
+    usedAxes.forEach(function(k){
+      idxs.push(dotTraceIndex[k]);
+      xu.push(perX[k]||[]); yu.push(perY[k]||[]); cu.push(perC[k]||[]);
+    });
+    if(idxs.length) Plotly.restyle('plotly-div', {x:xu, y:yu, 'marker.color':cu}, idxs);
   });
-  pd.on('plotly_unhover', function(){ box.innerHTML=staticHTML; });
+  pd.on('plotly_unhover', function(){ box.innerHTML=staticHTML; clearDots(); });
 
   document.getElementById('updated').textContent="데이터 기준일: "+todayStr();
 }
